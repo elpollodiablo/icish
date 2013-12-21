@@ -13,7 +13,4 @@ if [ "$ok" == "y" ]; then
 		echo "executing $3 on $SSH_HOST"
 		ssh $SSH_HOST $3;
 	done;
-else;
-	echo pussy
-
 fi;
