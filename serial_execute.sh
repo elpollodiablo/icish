@@ -1,6 +1,6 @@
 #!/bin/bash
 
-test "$3" || { echo "$0 <regex> <command>"; exit 1; }
+test "$3" || { echo "$0 <host|service> <filter> <command>"; exit 1; }
 
 SSH_HOSTS=`python icish $1 "$2"`
 DISPLAY=`echo $SSH_HOSTS |sed 's, ,\n,g'`
