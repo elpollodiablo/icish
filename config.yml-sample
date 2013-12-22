@@ -1,0 +1,5 @@
+---
+icinga_authkey: dummyauthkey
+icinga_uri: http://icingahost/icinga-web/web/api
+icinga_auth: gssapi
+use_domain: my.internal.domain

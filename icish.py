@@ -1,80 +1,78 @@
 #!/usr/bin/env python
 
-from fabric.api import env
 import requests
 import os.path
 MAX_AUTH_ERRORS=3
-sample_config = {'icinga_authkey':'dummyauthkey', 'icinga_uri': 'http://infra-icinga03.in.phoria.eu/icinga-web/web/api', 'icinga_auth': 'gssapi', 'use_domain':'in.phoria.eu'} #'basic'}
 
-blubb="""
-http://infra-icinga03.in.phoria.eu/icinga-web/web/api/service/
+def _debug(config, string):
+	if config.has_key('debug') and config['debug']:
+		print string
 
-filter[
-AND(HOST_CURRENT_STATE%7C=%7C0;OR(SERVICE_CURRENT_STATE%7C=%7C1;SERVICE_CURRENT_STATE%7C=%7C2))]
-/columns(SERVICE_NAME%7CHOST_NAME%7CSERVICE_CURRENT_STATE%7CHOST_NAME%7CHOST_CURRENT_STATE%7CHOSTGROUP_NAME)/order(SERVICE_CURRENT_STATE;DESC)/countColumn=SERVICE_ID/json
-
-http://infra-icinga03.in.phoria.eu/icinga-web/web/api/service/
-filter[sAND(HOST_CURRENT_STATE|=|0;OR(SERVICE_CURRENT_STATE|=|1;SERVICE_CURRENT_STATE|=|2))]
-
-/columns(SERVICE_NAME|HOST_NAME|SERVICE_CURRENT_STATE|HOST_NAME|HOST_CURRENT_STATE|HOSTGROUP_NAME)/order(SERVICE_CURRENT_STATE;DESC)/json
-"""
-
-def load_config(config_file = os.path.expanduser("~") + os.path.sep + ".icish.yml"):
-	return sample_config
-
+# implementation of requesting info from icinga
 def _get_user_pass(config):
+	"""prompt for missing user/password"""
+
 	if not config.has_key('icinga_user'):
+		_debug(config, "No user found in config, prompting")
 		while True:
 			config['icinga_user'] = raw_input("Username for %s: " % config['icinga_uri'])
 			if config['icinga_user'] is not '': break
 	if not config.has_key('icinga_password'):
+		_debug(config, "No password found in config, prompting")
 		import getpass
 		config['icinga_password'] = getpass.getpass()
 	
-def get_auth(config):
+def _get_auth(config):
 	assert config.has_key('icinga_auth')
-	assert config['icinga_auth'] in ('gssapi', 'basic', 'digest')
+	assert config['icinga_auth'] in ('gssapi', 'basic', 'digest', 'none')
 	if config['icinga_auth'] == "gssapi":
-		# print "Trying to authenticate with GSSAPI"
+		_debug(config, "Trying to authenticate with GSSAPI")
 		from requests_kerberos import HTTPKerberosAuth
 		return HTTPKerberosAuth()
 	elif config['icinga_auth'] == 'basic':
+		_debug(config, "Trying to authenticate with basic authentication")
 		_get_user_pass(config)
 		from requests.auth import HTTPBasicAuth
 		return HTTPBasicAuth(config['icinga_user'], config['icinga_password'])
 	elif config['icinga_auth'] == 'digest':
+		_debug(config, "Trying to authenticate with digest authentication")
+		_get_user_pass(config)
 		from requests.auth import HTTPDigestAuth
 		return HTTPDigestAuth(config['icinga_user'], config['icinga_password'])
+	elif config['icinga_auth'] == 'none':
+		return None
+
 
 def _get_host_list(config, filter=''):
 	status_code = 499
 	errors = 0
+
+	# dorky auth error checking ...
 	while (status_code >= 400) and (status_code < 500) and (errors is not MAX_AUTH_ERRORS):
-		auth = get_auth(config)
-		cookies = {'icinga-web-loginname':'philip'}
-		request_uri = config['icinga_uri'] + "/" + filter + "/columns[HOST_NAME]/authkey=dummyauthkey/json"
-		headers = {'HTTP_REFERER': request_uri}
-		#print request_uri
-		r=requests.get(request_uri, auth=auth, cookies=cookies, headers=headers)
+		auth = _get_auth(config)
+		request_uri = config['icinga_uri'] + "/%s/columns[HOST_NAME]/authkey=%s/json" % (filter, config['icinga_authkey'])
+		_debug(config, "request uri: %s" % request_uri)
+		r=requests.get(request_uri, auth=auth)
 		status_code = r.status_code
-		#print "status", status_code
+		_debug(config, "http status: %s" % status_code)
 		if status_code == 500:
 			print "icinga didn't like our request %s and responded with %s" %(request_uri, status_code)
 			import sys
 			sys.exit(1)
 		errors += 1
-	if errors is MAX_AUTH_ERRORS: print "Too many authentication errors (%i)" % MAX_AUTH_ERRORS
+	if errors is MAX_AUTH_ERRORS: 
+		print "Too many authentication errors (%i)" % MAX_AUTH_ERRORS
+		import sys
+		sys.exit(1)
 	raw = r.json()
 	assert raw.has_key("result")
-	#import pprint
-	#pprint.pprint(raw)
 	result = list() 
 	for e in raw['result']:
 		if e['HOST_NAME'] not in result:
 			result.append(e['HOST_NAME'])
-	#print result
 	return result
 
+# implementation of logic expression to icinga rpn notation
 OPERATORS = [
 	[" like ", "|LIKE|", lambda x: x],
 	[" is ", "|=|", lambda x: x],
@@ -90,6 +88,8 @@ LOGIC = [
 	[" or ", " | ", "OR("]
 ]
 VALUES = [
+	[" activehosts "," host_is_active is true "],
+	[" activeservices "," service_is_active is true "],
 	[" true ", " 1 "],
 	[" false ", " 0 "],
 	[" ok ", " 0 "],
@@ -103,6 +103,13 @@ VALUES = [
 	[" failed ", " 2 "],
 	[" fail ", " 2 "],
 	[" red ", " 2 "],
+	[" unknown ", " -1 "],
+	[" purple ", " -1 "],
+	[" na ", " -1 "],
+	[" service_status ", " service_current_state "],
+	[" service_state ", " service_current_state "],
+	[" host_status ", " service_current_state "],
+	[" host_state ", " service_current_state "],
 ]
 KEYWORDS = [
 	"SERVICE_NAME",
@@ -128,19 +135,27 @@ KEYWORDS = [
 	"HOSTGROUP_NAME",
 ]
 
-def _translate_to_rpn(s):
+def icingafy(s):
+	"""prepare the filter string and call _create_node_tree"""
+
+	s = " " + s + " "
 	s=s.replace(")", " ) ").replace("("," ( ")
-#	for op in OPERATORS:
-#		s=s.replace(op[0], op[1])
 	
 	for logic in LOGIC:
 		s=s.replace(logic[0], logic[1])
+
 	for val in VALUES:
 		s=s.replace(val[0], val[1])
-	#print s
-	return _create_node_tree(s)	
+	_debug(config, "filter with substitutions: %s" % s)
+	nt = _create_node_tree(s)
+	if nt[0] not in ['&', '|']:
+		nt.insert(0, '&')
+	return _assemble_icinga_filter(nt)
 
 def _assemble_icinga_filter(nt):
+	"""re-assemble the node tree into a icinga compatible filter,
+	substitute comparison operators"""
+
 	result=""
 	need_parens = False
 	for n in nt:
@@ -171,6 +186,9 @@ def _assemble_icinga_filter(nt):
 	return result			
 
 def _create_node_tree(s):
+	"""dissassemble the string recursively and create a nested
+	list of nodes, with the logic operators moved into the right place"""
+
 	my_child_nodes = []
 	l = len(s)
 	l_counter=0
@@ -225,11 +243,9 @@ def _create_node_tree(s):
 
 
 def tests():
+	"""FIXME: do something more useful here"""
 	tests = {
 		"all hosts in icinga":"service_name contains APT and (host_name contains prod or host_name contains dev) and service_current_state is fail",
-		"foo":"service_name contains APT       and           (    host_name contains prod or    host_name contains dev     )and service_status is   fail",
-		"bar":"service_name contains APT and (host_name contains prod or host_name contains dev or (host_name contains test or host_name contains pre) ) and service_status is fail",
-		"blah":"(foo is b and bar is bluh) or service_name contains APT and (host_name contains prod or host_name contains dev or (host_name contains test or host_name contains pre) ) and service_status is fail"
 	}
 
 	for test in tests:
@@ -238,18 +254,44 @@ def tests():
 		print _translate_to_rpn(test)
 		print
 
-def get_host_list_by_service_filter(config, entity, filter_text):
-	filter
-	return _get_host_list(config, filter)
+def get_hosts_from_icinga(config, entity, filter_text):
+	# we need to wrap the filter in one AND() because icinga wants it like that.
+	filter = "%s/filter[%s]" % (entity, icingafy(filter_text))
+	_debug(config, "icinga filter string: %s" % filter)
+	result=[]
+	for host in _get_host_list(config, filter):
+		if config.has_key("use_domain"):
+			result.append(host + "." + config["use_domain"])
+		else:
+			result.append(host)
+		
+	return result
 
 
 if __name__ == "__main__":
-	config = load_config()
 	import sys
-	if sys.argv[1] in ["host", "service"]:
-		rpn = _translate_to_rpn(sys.argv[2])
-		filter = "%s/filter[AND(%s)]" % (sys.argv[1], _assemble_icinga_filter(rpn))
-		for host in _get_host_list(config, filter):
-			print host + "." + config["use_domain"]
+	if len(sys.argv) > 1 and sys.argv[2] in ["host", "service"]:
+		cf = open(sys.argv[1])
+		import yaml
+		config = yaml.load(cf)
+		cf.close()
+		print "\n".join(get_hosts_from_icinga(config, sys.argv[2], sys.argv[3]))
 	else:
-		print "blubb?"
+		print """%s <config.yml> [host|service] <filter expression>
+
+  construct conditions using these keywords:
+    %s
+
+  and these operators:
+    %s
+
+  use shorthands for some values:
+    %s
+
+  combine the resulting conditions with "and" and "or"
+  and (optionally) nest then in parentheses for explicit
+  expressions.
+
+  Examples:
+    %s config.yml service 'host_is_active is true and (host_name contains prod or host_name contains important) and service_current_state is critical and service_name contains load'
+""" %(sys.argv[0], ", ".join([k.lower().strip() for k in KEYWORDS]), ", ".join([ op[0].strip() for op in OPERATORS]), ", ".join([ v[0].strip() +" (" + v[1].strip() + ")" for v in VALUES]), sys.argv[0])
