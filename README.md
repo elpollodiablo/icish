@@ -48,22 +48,26 @@ Examples:
 ---------
 
 * standalone:
-
+```
     ./icish.py # help text
     ./icish.py config.yml service 'activeservices and (host_name contains prod or host_name contains infra) and service_current_state is critical and service_name contains load'
+```
 
 * with the onboard, dinky serial-execute.sh:
-
+```
     ./serial_execute.sh service "service_name contains APT and service_state not ok and service_state not na" "sudo apt-get upgrade -y"
+```
 
 * with pssh:
-
+```
     parallel-ssh -H "`./icish.py config.yml service 'activeservices and service_name contains APT and service_state not ok and service_state not na'`" sudo apt-get upgrade -y
+```
 
 * with fabric: see fabfile.py
 
 TODO:
 -----
+
 - [x] write readme
 - [x] give a fabric example
 - [ ] better error handling
