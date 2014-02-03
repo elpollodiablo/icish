@@ -135,7 +135,7 @@ KEYWORDS = [
 	"HOSTGROUP_NAME",
 ]
 
-def icingafy(s):
+def icingafy(config, s):
 	"""prepare the filter string and call _create_node_tree"""
 
 	s = " " + s + " "
@@ -197,15 +197,12 @@ def _create_node_tree(s):
 	something_in_parens=False
 	#print ">>>> called with ", s
 
-	def icingafy_expression(u):
-		return u.strip()
-
 	while l_counter < l:
 		if s[l_counter] in ["&", "|"]:
 			#print "found op"
 			if nesting == 0:
 				if s[l_last:l_counter].strip() != "":
-					my_child_nodes.append(icingafy_expression(s[l_last:l_counter]))
+					my_child_nodes.append(s[l_last:l_counter].strip())
 				# reverse to rpn
 				if my_child_nodes[0] in ["&", "|"]:
 					if s[l_counter] == my_child_nodes[0]:
@@ -224,7 +221,7 @@ def _create_node_tree(s):
 		if s[l_counter] is "(":
 			if nesting == 0:
 				if s[l_last:l_counter].strip() != "":
-					my_child_nodes.append(icingafy_expression(s[l_last:l_counter]))
+					my_child_nodes.append(s[l_last:l_counter].strip())
 				l_last = l_counter + 1
 			nesting += 1
 		if s[l_counter] is ")":
@@ -236,7 +233,7 @@ def _create_node_tree(s):
                         	l_last = l_counter + 1
 
 		if l_counter ==  l - 1 and s[l_last:l_counter + 1].strip() != "":
-			my_child_nodes.append(icingafy_expression(s[l_last:l_counter+1]))
+			my_child_nodes.append(s[l_last:l_counter+1].strip())
 
 		l_counter +=1
 	return my_child_nodes
@@ -256,7 +253,7 @@ def tests():
 
 def get_hosts_from_icinga(config, entity, filter_text):
 	# we need to wrap the filter in one AND() because icinga wants it like that.
-	filter = "%s/filter[%s]" % (entity, icingafy(filter_text))
+	filter = "%s/filter[%s]" % (entity, icingafy(config, filter_text))
 	_debug(config, "icinga filter string: %s" % filter)
 	result=[]
 	for host in _get_host_list(config, filter):
@@ -277,7 +274,7 @@ if __name__ == "__main__":
 		cf.close()
 		print "\n".join(get_hosts_from_icinga(config, sys.argv[2], sys.argv[3]))
 	else:
-		print """%s <config.yml> [host|service] <filter expression>
+		print """%s <config.yml> <host|service> <filter expression>
 
   construct conditions using these keywords:
     %s
