@@ -1,6 +1,6 @@
 #!/bin/bash
 
-test "$3" || { echo "$0 <host|service> <icish filter expression> <command>"; exit 1; }
+test "$3" || { echo "$0 <host|service> <icish filter> <command>"; exit 1; }
 
 SSH_HOSTS=`./icish.py config.yml $1 "$2"`
 DISPLAY=`echo $SSH_HOSTS |sed 's, ,\n,g'`
