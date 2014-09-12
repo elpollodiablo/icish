@@ -2,7 +2,7 @@
 
 test "$3" || { echo "$0 <host|service> <icish filter> <command>"; exit 1; }
 
-SSH_HOSTS=`./icish.py config.yml $1 "$2"`
+SSH_HOSTS=`python ./icish.py config.yml $1 "$2" |sort`
 DISPLAY=`echo $SSH_HOSTS |sed 's, ,\n,g'`
 echo -e "Host to execute $3 on:\n$DISPLAY"
 echo "Ok? (y/n)"
